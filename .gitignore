@@ -114,3 +114,23 @@ ENV/
 *.model
 
 !documentation/assets/scribble_example.png
+dynamic-network-architectures/.gitignore
+dynamic-network-architectures/LICENCE
+dynamic-network-architectures/README.md
+dynamic-network-architectures/setup.py
+dynamic-network-architectures/dynamic_network_architectures/__init__.py
+dynamic-network-architectures/dynamic_network_architectures/architectures/__init__.py
+dynamic-network-architectures/dynamic_network_architectures/architectures/resnet.py
+dynamic-network-architectures/dynamic_network_architectures/architectures/unet.py
+dynamic-network-architectures/dynamic_network_architectures/architectures/vgg.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/__init__.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/helper.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/plain_conv_encoder.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/regularization.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/residual_encoders.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/residual.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/simple_conv_blocks.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/unet_decoder.py
+dynamic-network-architectures/dynamic_network_architectures/building_blocks/unet_residual_decoder.py
+dynamic-network-architectures/dynamic_network_architectures/initialization/__init__.py
+dynamic-network-architectures/dynamic_network_architectures/initialization/weight_init.py
