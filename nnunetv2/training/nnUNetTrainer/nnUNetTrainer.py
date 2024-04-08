@@ -183,7 +183,8 @@ class nnUNetTrainer(object):
             join(
                 nnUNet_results,
                 self.plans_manager.dataset_name,
-                exp_name + "__" + self.__class__.__name__,
+                exp_name,
+                #  + "__" + self.__class__.__name__,
                 # + "__"
                 # + self.plans_manager.plans_name
                 # + "__"

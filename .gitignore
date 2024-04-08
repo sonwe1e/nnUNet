@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
+Saved_nnUNetv2
 build/
 develop-eggs/
 dist/
