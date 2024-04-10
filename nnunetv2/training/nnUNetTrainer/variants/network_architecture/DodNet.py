@@ -154,6 +154,7 @@ class NoBottleneck(nn.Module):
 class unet3D(nn.Module):
     def __init__(self, layers, classes=2, weight_std=False):
         self.inplanes = 128
+        self.classes = classes
         self.weight_std = weight_std
         super(unet3D, self).__init__()
 
@@ -205,7 +206,16 @@ class unet3D(nn.Module):
             nn.ReLU(inplace=in_place),
             torch.nn.AdaptiveAvgPool3d((1, 1, 1)),
         )
-        self.controller = nn.Conv3d(256 + 2, 162, kernel_size=1, stride=1, padding=0)
+        self.controller = nn.Conv3d(
+            256 + 2, 144 + self.classes * 9, kernel_size=1, stride=1, padding=0
+        )
+        self.static_head = nn.Sequential(
+            nn.Conv3d(8, 8, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=in_place),
+            nn.Conv3d(8, 8, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=in_place),
+            nn.Conv3d(8, classes, kernel_size=1, stride=1, padding=0),
+        )
 
     def _make_layer(
         self,
@@ -360,21 +370,22 @@ class unet3D(nn.Module):
         weight_nums, bias_nums = [], []
         weight_nums.append(8 * 8)
         weight_nums.append(8 * 8)
-        weight_nums.append(8 * 2)
+        weight_nums.append(8 * self.classes)
         bias_nums.append(8)
         bias_nums.append(8)
-        bias_nums.append(2)
+        bias_nums.append(self.classes)
         weights, biases = self.parse_dynamic_params(params, 8, weight_nums, bias_nums)
 
         logits = self.heads_forward(head_inputs, weights, biases, N)
 
-        logits = logits.reshape(-1, 2, D, H, W)
+        logits = logits.reshape(-1, self.classes, D, H, W)
+        # logits = self.static_head(head_inputs)
 
         return logits
 
 
 def UNet3D(num_classes=1, weight_std=False):
-    print("Using DynConv 8,8,2")
+    print("Using DynConv 8, 8, 2")
     model = unet3D([1, 2, 2, 2, 2], num_classes, weight_std)
     return model
 
