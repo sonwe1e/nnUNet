@@ -186,8 +186,8 @@ class MyNet(nn.Module):
 
 if __name__ == "__main__":
     model = MyNet(1, 2, 32, False)
-    print(model.state_dict().keys())
-    # x = torch.randn((2, 1, 128, 128, 128))
-    # y = model(x)
-    # for _ in y:
-    #     print(_.shape)
+    # print(model.state_dict().keys())
+    x = torch.randn((2, 1, 128, 128, 128))
+    y = model(x)
+    for _ in y:
+        print(_.shape)
