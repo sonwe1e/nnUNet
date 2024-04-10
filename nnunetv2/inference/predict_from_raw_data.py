@@ -783,7 +783,10 @@ class nnUNetPredictor(object):
 
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
-        prediction = self.network(x)
+        task_ids = [0] * len(x)
+        task_ids = np.array(task_ids)
+        prediction = self.network(x, task_ids)
+        # prediction = self.network(x)
 
         if mirror_axes is not None:
             # check for invalid numbers in mirror_axes
@@ -799,7 +802,10 @@ class nnUNetPredictor(object):
             ]
             for axes in axes_combinations:
                 prediction += torch.flip(
-                    self.network(torch.flip(x, (*axes,))), (*axes,)
+                    self.network(torch.flip(x, (*axes,)), task_ids),
+                    (*axes,),
+                    # self.network(torch.flip(x, (*axes,))),
+                    # (*axes,),
                 )
             prediction /= len(axes_combinations) + 1
         return prediction
@@ -826,11 +832,11 @@ class nnUNetPredictor(object):
                 print(f"preallocating results arrays on device {results_device}")
             predicted_logits = torch.zeros(
                 (self.label_manager.num_segmentation_heads, *data.shape[1:]),
-                dtype=torch.half,
+                dtype=torch.float32,
                 device=results_device,
             )
             n_predictions = torch.zeros(
-                data.shape[1:], dtype=torch.half, device=results_device
+                data.shape[1:], dtype=torch.float32, device=results_device
             )
             if self.use_gaussian:
                 gaussian = compute_gaussian(
@@ -851,13 +857,12 @@ class nnUNetPredictor(object):
                 prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(
                     results_device
                 )
-
                 predicted_logits[sl] += (
                     prediction * gaussian if self.use_gaussian else prediction
                 )
                 n_predictions[sl[1:]] += gaussian if self.use_gaussian else 1
 
-            predicted_logits /= n_predictions
+            predicted_logits = predicted_logits / n_predictions
             # check for infs
             if torch.any(torch.isinf(predicted_logits)):
                 raise RuntimeError(
@@ -889,7 +894,7 @@ class nnUNetPredictor(object):
         # So autocast will only be active if we have a cuda device.
         with torch.no_grad():
             with (
-                torch.autocast(self.device.type, enabled=True)
+                torch.autocast(self.device.type, enabled=False)
                 if self.device.type == "cuda"
                 else dummy_context()
             ):
@@ -1237,6 +1242,13 @@ def predict_entry_point():
         help="path of the checkpoint you want to use. Default: empty string",
     )
     parser.add_argument(
+        "-m",
+        "--model_folder",
+        type=str,
+        default="",
+        help="path of the model folder you want to use. Default: empty string",
+    )
+    parser.add_argument(
         "-npp",
         type=int,
         required=False,
@@ -1306,7 +1318,10 @@ def predict_entry_point():
     args = parser.parse_args()
     args.f = [i if i == "all" else int(i) for i in args.f]
 
-    model_folder = get_output_folder(args.d, args.tr, args.p, args.c)
+    if args.model_folder == "":
+        model_folder = get_output_folder(args.d, args.tr, args.p, args.c)
+    else:
+        model_folder = args.model_folder
 
     if not isdir(args.o):
         maybe_mkdir_p(args.o)
