@@ -26,8 +26,8 @@ class DodTrainer(nnUNetTrainer):
         super().__init__(
             plans, configuration, fold, dataset_json, unpack_dataset, device, exp_name
         )
-        self.num_epochs = 500
-        self.oversample_foreground_percent = 0.6
+        self.num_epochs = 1000
+        self.oversample_foreground_percent = 0.33
         self.initial_lr = 2e-4
         self.enable_deep_supervision = False
 
@@ -218,7 +218,7 @@ class DodTrainer(nnUNetTrainer):
         should be generated. label_manager takes care of all that for you.)
 
         """
-        return MyNet(num_input_channels, num_output_channels, 32)
+        return MyNet(num_input_channels, num_output_channels, 32, 32)
         # return unet3D([1, 2, 2, 2, 2], num_output_channels)
 
     def set_deep_supervision_enabled(self, enabled: bool):

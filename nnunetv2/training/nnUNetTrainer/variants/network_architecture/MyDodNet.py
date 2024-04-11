@@ -131,11 +131,12 @@ class mschead(nn.Module):
 
 
 class MyNet(nn.Module):
-    def __init__(self, in_channels, n_classes, n_channels):
+    def __init__(self, in_channels, n_classes, n_channels, head_channels=16):
         super().__init__()
         self.in_channels = in_channels
         self.n_classes = n_classes
         self.n_channels = n_channels
+        self.head_channels = head_channels
 
         self.conv = DoubleConv(in_channels, n_channels)
         self.enc1 = Down(n_channels, 2 * n_channels)
@@ -148,10 +149,15 @@ class MyNet(nn.Module):
         self.dec3 = Up(4 * n_channels, n_channels)
         self.dec4 = Up(2 * n_channels, n_channels)
 
-        self.simple_conv = nn.Conv3d(n_channels, 8, 1)
-
+        self.params_list = [
+            head_channels * n_channels,
+            head_channels * n_classes,
+            head_channels,
+            n_classes,
+        ]
+        print(sum(self.params_list))
         self.GAP = nn.AdaptiveAvgPool3d(1)
-        self.controller = nn.Conv3d(n_channels * 8 + 2, 144 + n_classes * 9, 1)
+        self.controller = nn.Conv3d(n_channels * 8 + 2, sum(self.params_list), 1)
 
     def encoding_task(self, task_id):
         N = task_id.shape[0]
@@ -178,27 +184,14 @@ class MyNet(nn.Module):
         x_cond = torch.cat([x_feat, task_embeddings], dim=1)
         params = self.controller(x_cond)
         params = params.squeeze(-1).squeeze(-1).squeeze(-1)
-        params_split = torch.split_with_sizes(
-            params, [64, 64, 8 * self.n_classes, 8, 8, self.n_classes], dim=1
-        )
-        head_feat = self.simple_conv(mask4)
-        N, _, D, H, W = head_feat.shape
-        head_feat = head_feat.view(1, -1, D, H, W)
+        params_split = torch.split_with_sizes(params, self.params_list, dim=1)
+        N, _, D, H, W = mask4.shape
+        head_feat = mask4.view(1, -1, D, H, W)
         head_feat = F.leaky_relu(
             F.conv3d(
                 head_feat,
-                params_split[0].reshape(N * 8, -1, 1, 1, 1),
-                bias=params_split[3].reshape(N * 8),
-                stride=1,
-                padding=0,
-                groups=N,
-            )
-        )
-        head_feat = F.leaky_relu(
-            F.conv3d(
-                head_feat,
-                params_split[1].reshape(N * 8, -1, 1, 1, 1),
-                bias=params_split[4].reshape(N * 8),
+                params_split[0].reshape(N * self.head_channels, -1, 1, 1, 1),
+                bias=params_split[2].reshape(N * self.head_channels),
                 stride=1,
                 padding=0,
                 groups=N,
@@ -206,8 +199,8 @@ class MyNet(nn.Module):
         )
         logits = F.conv3d(
             head_feat,
-            params_split[2].reshape(self.n_classes * N, -1, 1, 1, 1),
-            bias=params_split[5].reshape(self.n_classes * N),
+            params_split[1].reshape(self.n_classes * N, -1, 1, 1, 1),
+            bias=params_split[3].reshape(self.n_classes * N),
             stride=1,
             padding=0,
             groups=N,
@@ -219,9 +212,9 @@ class MyNet(nn.Module):
 if __name__ == "__main__":
     import numpy as np
 
-    model = MyNet(1, 2, 32, False)
+    model = MyNet(1, 2, 32, 16).cuda()
     # print(model.state_dict().keys())
-    x = torch.randn((2, 1, 128, 128, 128))
+    x = torch.randn((2, 1, 128, 128, 128)).cuda()
     y = model(x, np.array([0, 1]))
     for _ in y:
         print(_.shape)
