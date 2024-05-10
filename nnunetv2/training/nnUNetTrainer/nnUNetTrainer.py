@@ -221,14 +221,15 @@ class nnUNetTrainer(object):
         )
 
         ### Some hyperparameters for you to fiddle with
+        self.batch_size = 2
         self.initial_lr = 1e-2
         self.weight_decay = 3e-5
-        self.oversample_foreground_percent = 0.33
+        self.oversample_foreground_percent = 0.66
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
         self.num_epochs = 1000
         self.current_epoch = 0
-        self.enable_deep_supervision = True
+        self.enable_deep_supervision = False
 
         ### Dealing with labels/regions
         self.label_manager = self.plans_manager.get_label_manager(dataset_json)
@@ -425,14 +426,16 @@ class nnUNetTrainer(object):
     def _set_batch_size_and_oversample(self):
         if not self.is_ddp:
             # set batch size to what the plan says, leave oversample untouched
-            self.batch_size = self.configuration_manager.batch_size
+            # self.batch_size = self.configuration_manager.batch_size
+            pass
         else:
             # batch size is distributed over DDP workers and we need to change oversample_percent for each worker
 
             world_size = dist.get_world_size()
             my_rank = dist.get_rank()
 
-            global_batch_size = self.configuration_manager.batch_size
+            # global_batch_size = self.configuration_manager.batch_size
+            global_batch_size = self.batch_size
             assert global_batch_size >= world_size, (
                 "Cannot run DDP if the batch size is smaller than the number of "
                 "GPUs... Duh."

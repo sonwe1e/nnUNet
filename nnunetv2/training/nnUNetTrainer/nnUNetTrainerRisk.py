@@ -5,33 +5,14 @@ from torch.cuda.amp import autocast as dummy_context
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 import torch.nn as nn
 from typing import Union, Tuple, List
-from nnunetv2.training.loss.dice import MemoryEfficientSoftDiceLoss
-from nnunetv2.training.loss.compound_losses import DC_and_Weight_BCE_loss
-
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet import (
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyNet_Risk import (
     MyNet,
 )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNetv2 import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_mschead import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_Mamba import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_Mamba_mschead import (
-#     MyNet,
-# )
-
+import json
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn
 
 
-class DodTrainer(nnUNetTrainer):
+class RiskTrainer(nnUNetTrainer):
     def __init__(
         self,
         plans: dict,
@@ -45,11 +26,16 @@ class DodTrainer(nnUNetTrainer):
         super().__init__(
             plans, configuration, fold, dataset_json, unpack_dataset, device, exp_name
         )
-        self.num_epochs = 1000
-        self.batch_size = 2
-        self.oversample_foreground_percent = 0.66
+        self.num_epochs = 500
+        self.oversample_foreground_percent = 0.33
         self.initial_lr = 2e-4
         self.enable_deep_supervision = False
+        with open(
+            "/home/yhwu/sw/nnUNet/Saved_nnUNetv2/results/Dataset006_LargeIA_Croped/ruptured.json",
+            "r",
+        ) as f:
+            self.name2ruptured = json.load(f)
+        self.risk_loss = nn.BCEWithLogitsLoss()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -81,19 +67,14 @@ class DodTrainer(nnUNetTrainer):
         data = batch["data"]
         target = batch["target"]
         keys = batch["keys"]
-        task_ids = [0] * len(keys)
-        loss_weight = [1] * len(keys)
-        for k in range(len(keys)):
-            if "Tr" in keys[k]:
-                task_ids[k] = 0
-                loss_weight[k] = 10
-            else:
-                task_ids[k] = 1
-                loss_weight[k] = 1
-        task_ids = np.array(task_ids)
-        loss_weight = torch.tensor(loss_weight).cuda()
+        b = len(keys)
+        risk_labels = torch.zeros(b, 1)
+        for i in range(b):
+            if target.max() > 0 and self.name2ruptured[keys[i]] == 1:
+                target[i, 0] = 1
 
         data = data.to(self.device, non_blocking=True)
+        risk_labels = risk_labels.to(self.device, non_blocking=True)
         if isinstance(target, list):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
@@ -109,10 +90,9 @@ class DodTrainer(nnUNetTrainer):
             if self.device.type == "cuda"
             else dummy_context()
         ):
-            output = self.network(data, task_ids)
-            # output = self.network(data)
+            output, risk_pred = self.network(data)
             # del data
-            l = self.loss(output, target, loss_weight)
+            l = self.loss(output, target) + self.risk_loss(risk_pred, risk_labels)
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
@@ -132,15 +112,14 @@ class DodTrainer(nnUNetTrainer):
         data = batch["data"]
         target = batch["target"]
         keys = batch["keys"]
-        task_ids = [0] * len(keys)
-        # for k in range(len(keys)):
-        #     if "Tr" in keys[k]:
-        #         task_ids[k] = 0
-        #     else:
-        #         task_ids[k] = 1
-        task_ids = np.array(task_ids)
+        b = len(keys)
+        risk_labels = torch.zeros(b, 1)
+        for i in range(b):
+            if target.max() > 0 and self.name2ruptured[keys[i]] == 1:
+                target[i, 0] = 1
 
         data = data.to(self.device, non_blocking=True)
+        risk_labels = risk_labels.to(self.device, non_blocking=True)
         if isinstance(target, list):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
@@ -155,10 +134,10 @@ class DodTrainer(nnUNetTrainer):
             if self.device.type == "cuda"
             else dummy_context()
         ):
-            output = self.network(data, task_ids)
-            # output = self.network(data)
+            output, risk_pred = self.network(data)
             del data
-            l = self.loss(output, target, torch.ones(len(keys), 1, 1, 1, 1).cuda())
+            l = self.loss(output, target) + self.risk_loss(risk_pred, risk_labels)
+            print(self.risk_loss(risk_pred, risk_labels))
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
@@ -214,21 +193,6 @@ class DodTrainer(nnUNetTrainer):
             "fn_hard": fn_hard,
         }
 
-    def _build_loss(self):
-        loss = DC_and_Weight_BCE_loss(
-            {},
-            {
-                "batch_dice": self.configuration_manager.batch_dice,
-                "do_bg": True,
-                "smooth": 1e-5,
-                "ddp": self.is_ddp,
-            },
-            use_ignore_label=self.label_manager.ignore_label is not None,
-            dice_class=MemoryEfficientSoftDiceLoss,
-        )
-
-        return loss
-
     @staticmethod
     def build_network_architecture(
         architecture_class_name: str,
@@ -257,7 +221,9 @@ class DodTrainer(nnUNetTrainer):
         should be generated. label_manager takes care of all that for you.)
 
         """
-        return MyNet(num_input_channels, num_output_channels, 32, 16)
+        return MyNet(
+            num_input_channels, num_output_channels, 32, enable_deep_supervision
+        )
 
     def set_deep_supervision_enabled(self, enabled: bool):
         pass

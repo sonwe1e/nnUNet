@@ -150,12 +150,12 @@ class MyNet(nn.Module):
         self.dec4 = Up(2 * n_channels, n_channels)
 
         self.params_list = [
-            head_channels * n_channels,
+            n_channels * head_channels,
             head_channels * n_classes,
             head_channels,
             n_classes,
         ]
-        print(sum(self.params_list))
+
         self.GAP = nn.AdaptiveAvgPool3d(1)
         self.controller = nn.Conv3d(n_channels * 8 + 2, sum(self.params_list), 1)
 

@@ -49,14 +49,6 @@ class DoubleConv(nn.Module):
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
         )
-        # self.double_conv = nn.Sequential(
-        #     nn.Conv3d(in_channels, out_channels, 3, 1, 1),
-        #     nn.InstanceNorm3d(out_channels),
-        #     nn.LeakyReLU(inplace=True),
-        #     nn.Conv3d(out_channels, out_channels, 3, 1, 1),
-        #     nn.InstanceNorm3d(out_channels),
-        #     nn.LeakyReLU(inplace=True),
-        # )
         self.residual = in_channels == out_channels
 
     def forward(self, x):
@@ -139,7 +131,7 @@ class mschead(nn.Module):
 
 
 class MyNet(nn.Module):
-    def __init__(self, in_channels, n_classes, n_channels, deep_supervision=False):
+    def __init__(self, in_channels, n_classes, n_channels, deep_supervision=True):
         super().__init__()
         self.in_channels = in_channels
         self.n_classes = n_classes
@@ -162,9 +154,11 @@ class MyNet(nn.Module):
                 Out(2 * n_channels, n_classes),
                 Out(n_channels, n_classes),
                 Out(n_channels, n_classes),
-                mschead(n_channels, n_classes),
+                # mschead(n_channels, n_classes),
             ]
         )
+
+        self.fc = nn.Linear(8 * n_channels, 1)
 
     def forward(self, x):
         x1 = self.conv(x)
@@ -179,15 +173,15 @@ class MyNet(nn.Module):
         mask4 = self.dec4(mask3, x1)
         masks = [mask1, mask2, mask3, mask4]
 
+        risk_prob = self.fc(F.adaptive_avg_pool3d(x5, 1).view(x5.size(0), -1))
         if self.deep_supervision:
-            return [m(mask) for m, mask in zip(self.out, masks)][::-1]
+            return [m(mask) for m, mask in zip(self.out, masks)][::-1], risk_prob
         else:
-            return self.out[-1](mask4)
+            return self.out[-1](mask4), risk_prob
 
 
 if __name__ == "__main__":
     model = MyNet(1, 2, 32, False)
-    # print(model.state_dict().keys())
     x = torch.randn((2, 1, 128, 128, 128))
     y = model(x)
     for _ in y:

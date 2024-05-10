@@ -785,8 +785,10 @@ class nnUNetPredictor(object):
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
         task_ids = [0] * len(x)
         task_ids = np.array(task_ids)
-        prediction = self.network(x, task_ids)
-        # prediction = self.network(x)
+        try:
+            prediction = self.network(x, task_ids)
+        except:
+            prediction = self.network(x)
 
         if mirror_axes is not None:
             # check for invalid numbers in mirror_axes
@@ -801,12 +803,16 @@ class nnUNetPredictor(object):
                 for c in itertools.combinations([m + 2 for m in mirror_axes], i + 1)
             ]
             for axes in axes_combinations:
-                prediction += torch.flip(
-                    self.network(torch.flip(x, (*axes,)), task_ids),
-                    (*axes,),
-                    # self.network(torch.flip(x, (*axes,))),
-                    # (*axes,),
-                )
+                try:
+                    prediction += torch.flip(
+                        self.network(torch.flip(x, (*axes,)), task_ids),
+                        (*axes,),
+                    )
+                except:
+                    prediction += torch.flip(
+                        self.network(torch.flip(x, (*axes,))),
+                        (*axes,),
+                    )
             prediction /= len(axes_combinations) + 1
         return prediction
 
@@ -894,7 +900,7 @@ class nnUNetPredictor(object):
         # So autocast will only be active if we have a cuda device.
         with torch.no_grad():
             with (
-                torch.autocast(self.device.type, enabled=False)
+                torch.autocast(self.device.type, enabled=True)
                 if self.device.type == "cuda"
                 else dummy_context()
             ):
@@ -1327,9 +1333,9 @@ def predict_entry_point():
         maybe_mkdir_p(args.o)
 
     # slightly passive aggressive haha
-    assert (
-        args.part_id < args.num_parts
-    ), "Do you even read the documentation? See nnUNetv2_predict -h."
+    # assert (
+    #     args.part_id < args.num_parts
+    # ), "Do you even read the documentation? See nnUNetv2_predict -h."
 
     assert args.device in [
         "cpu",

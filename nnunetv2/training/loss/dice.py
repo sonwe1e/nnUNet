@@ -6,10 +6,16 @@ from torch import nn
 
 
 class SoftDiceLoss(nn.Module):
-    def __init__(self, apply_nonlin: Callable = None, batch_dice: bool = False, do_bg: bool = True, smooth: float = 1.,
-                 ddp: bool = True, clip_tp: float = None):
-        """
-        """
+    def __init__(
+        self,
+        apply_nonlin: Callable = None,
+        batch_dice: bool = False,
+        do_bg: bool = True,
+        smooth: float = 1.0,
+        ddp: bool = True,
+        clip_tp: float = None,
+    ):
+        """ """
         super(SoftDiceLoss, self).__init__()
 
         self.do_bg = do_bg
@@ -38,7 +44,7 @@ class SoftDiceLoss(nn.Module):
             fn = AllGatherGrad.apply(fn).sum(0)
 
         if self.clip_tp is not None:
-            tp = torch.clip(tp, min=self.clip_tp , max=None)
+            tp = torch.clip(tp, min=self.clip_tp, max=None)
 
         nominator = 2 * tp
         denominator = 2 * tp + fp + fn
@@ -56,8 +62,14 @@ class SoftDiceLoss(nn.Module):
 
 
 class MemoryEfficientSoftDiceLoss(nn.Module):
-    def __init__(self, apply_nonlin: Callable = None, batch_dice: bool = False, do_bg: bool = True, smooth: float = 1.,
-                 ddp: bool = True):
+    def __init__(
+        self,
+        apply_nonlin: Callable = None,
+        batch_dice: bool = False,
+        do_bg: bool = True,
+        smooth: float = 1.0,
+        ddp: bool = True,
+    ):
         """
         saves 1.6 GB on Dataset017 3d_lowres
         """
@@ -69,7 +81,8 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
         self.smooth = smooth
         self.ddp = ddp
 
-    def forward(self, x, y, loss_mask=None):
+    def forward(self, x, y, loss_mask=None, loss_weight=None):
+
         if self.apply_nonlin is not None:
             x = self.apply_nonlin(x)
 
@@ -90,7 +103,11 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
             if not self.do_bg:
                 y_onehot = y_onehot[:, 1:]
 
-            sum_gt = y_onehot.sum(axes) if loss_mask is None else (y_onehot * loss_mask).sum(axes)
+            sum_gt = (
+                y_onehot.sum(axes)
+                if loss_mask is None
+                else (y_onehot * loss_mask).sum(axes)
+            )
 
         # this one MUST be outside the with torch.no_grad(): context. Otherwise no gradients for you
         if not self.do_bg:
@@ -103,6 +120,10 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
             intersect = (x * y_onehot * loss_mask).sum(axes)
             sum_pred = (x * loss_mask).sum(axes)
 
+        if loss_weight is not None:
+            loss_weight = loss_weight.reshape(-1, 1)
+            intersect = intersect * loss_weight
+
         if self.batch_dice:
             if self.ddp:
                 intersect = AllGatherGrad.apply(intersect).sum(0)
@@ -113,7 +134,9 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
             sum_pred = sum_pred.sum(0)
             sum_gt = sum_gt.sum(0)
 
-        dc = (2 * intersect + self.smooth) / (torch.clip(sum_gt + sum_pred + self.smooth, 1e-8))
+        dc = (2 * intersect + self.smooth) / (
+            torch.clip(sum_gt + sum_pred + self.smooth, 1e-8)
+        )
 
         dc = dc.mean()
         return -dc
@@ -152,7 +175,9 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
 
     if mask is not None:
         with torch.no_grad():
-            mask_here = torch.tile(mask, (1, tp.shape[1], *[1 for _ in range(2, tp.ndim)]))
+            mask_here = torch.tile(
+                mask, (1, tp.shape[1], *[1 for _ in range(2, tp.ndim)])
+            )
         tp *= mask_here
         fp *= mask_here
         fn *= mask_here
@@ -166,10 +191,10 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
         # tn = torch.stack(tuple(x_i * mask[:, 0] for x_i in torch.unbind(tn, dim=1)), dim=1)
 
     if square:
-        tp = tp ** 2
-        fp = fp ** 2
-        fn = fn ** 2
-        tn = tn ** 2
+        tp = tp**2
+        fp = fp**2
+        fn = fn**2
+        tn = tn**2
 
     if len(axes) > 0:
         tp = tp.sum(dim=axes, keepdim=False)
@@ -180,13 +205,26 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
     return tp, fp, fn, tn
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from nnunetv2.utilities.helpers import softmax_helper_dim1
+
     pred = torch.rand((2, 3, 32, 32, 32))
     ref = torch.randint(0, 3, (2, 32, 32, 32))
 
-    dl_old = SoftDiceLoss(apply_nonlin=softmax_helper_dim1, batch_dice=True, do_bg=False, smooth=0, ddp=False)
-    dl_new = MemoryEfficientSoftDiceLoss(apply_nonlin=softmax_helper_dim1, batch_dice=True, do_bg=False, smooth=0, ddp=False)
+    dl_old = SoftDiceLoss(
+        apply_nonlin=softmax_helper_dim1,
+        batch_dice=True,
+        do_bg=False,
+        smooth=0,
+        ddp=False,
+    )
+    dl_new = MemoryEfficientSoftDiceLoss(
+        apply_nonlin=softmax_helper_dim1,
+        batch_dice=True,
+        do_bg=False,
+        smooth=0,
+        ddp=False,
+    )
     res_old = dl_old(pred, ref)
     res_new = dl_new(pred, ref)
     print(res_old, res_new)

@@ -5,12 +5,12 @@ from torch.cuda.amp import autocast as dummy_context
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 import torch.nn as nn
 from typing import Union, Tuple, List
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyNet import (
-    MyNet,
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SuPreMunet3d import (
+    UNet3D,
 )
 
 
-class MyTrainer(nnUNetTrainer):
+class SuPreMFTTrainer(nnUNetTrainer):
     def __init__(
         self,
         plans: dict,
@@ -24,10 +24,10 @@ class MyTrainer(nnUNetTrainer):
         super().__init__(
             plans, configuration, fold, dataset_json, unpack_dataset, device, exp_name
         )
-        self.num_epochs = 1000
-        self.oversample_foreground_percent = 0.66
+        self.num_epochs = 500
+        # self.oversample_foreground_percent = 0.33
         self.initial_lr = 2e-4
-        self.enable_deep_supervision = True
+        self.enable_deep_supervision = False
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -121,9 +121,22 @@ class MyTrainer(nnUNetTrainer):
         should be generated. label_manager takes care of all that for you.)
 
         """
-        return MyNet(
-            num_input_channels, num_output_channels, 32, enable_deep_supervision
+        model = UNet3D(num_output_channels)
+        model_dict = torch.load(
+            "/home/yhwu/sw/SuPreM/direct_inference/pretrained_checkpoints/supervised_suprem_unet_2100.pth"
         )
+
+        store_dict = model.state_dict()
+        amount = 0
+        for key in model_dict.keys():
+            new_key = ".".join(key.split(".")[2:])
+            if new_key in store_dict.keys():
+                print(key, new_key)
+                store_dict[new_key] = model_dict[key]
+                amount += 1
+
+        # model.load_state_dict(store_dict)
+        return model
 
     def set_deep_supervision_enabled(self, enabled: bool):
         pass
