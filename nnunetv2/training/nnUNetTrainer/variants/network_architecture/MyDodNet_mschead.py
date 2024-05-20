@@ -39,13 +39,13 @@ class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.double_conv = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, 1, 1, 0),
+            nn.Conv3d(in_channels, out_channels, 3, 1, 1),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, 3, 1, 1, groups=8),
+            nn.Conv3d(out_channels, out_channels, 3, 1, 1, groups=4),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, 1, 1, 0),
+            nn.Conv3d(out_channels, out_channels, 3, 1, 1),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
         )
@@ -77,7 +77,8 @@ class Up(nn.Module):
                 in_channels // 2, in_channels // 2, kernel_size=2, stride=2
             )
 
-        self.conv = DoubleConv(in_channels, out_channels)
+        self.conv = DoubleConv(in_channels // 2, out_channels)
+        self.sk = SKFusion(in_channels // 2, height=2)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -97,7 +98,7 @@ class Up(nn.Module):
             ],
         )
 
-        x = torch.cat([x2, x1], dim=1)
+        x = self.sk([x1, x2])
         return self.conv(x)
 
 
@@ -118,15 +119,14 @@ class mschead(nn.Module):
         self.conv5 = nn.Conv3d(in_channels, in_channels, kernel_size=5, padding=2)
         self.conv7 = nn.Conv3d(in_channels, in_channels, kernel_size=7, padding=3)
         self.sk = SKFusion(in_channels, height=4)
-        self.conv = nn.Conv3d(in_channels * 5, out_channels, kernel_size=7, padding=3)
+        self.conv = nn.Conv3d(in_channels * 4, out_channels, kernel_size=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
         x3 = self.conv3(x1)
         x5 = self.conv5(x1)
         x7 = self.conv7(x1)
-        x_sk = self.sk([x1, x3, x5, x7])
-        x = self.conv(torch.cat([x1, x3, x5, x7, x_sk], dim=1))
+        x = self.conv(torch.cat([x1, x3, x5, x7], dim=1))
         return x
 
 
@@ -143,6 +143,11 @@ class MyNet(nn.Module):
         self.enc2 = Down(2 * n_channels, 4 * n_channels)
         self.enc3 = Down(4 * n_channels, 8 * n_channels)
         self.enc4 = Down(8 * n_channels, 8 * n_channels)
+
+        self.enc5 = nn.Sequential(
+            DoubleConv(8 * n_channels, 8 * n_channels),
+            DoubleConv(8 * n_channels, 8 * n_channels),
+        )
 
         self.dec1 = Up(16 * n_channels, 4 * n_channels)
         self.dec2 = Up(8 * n_channels, 2 * n_channels)
@@ -174,6 +179,7 @@ class MyNet(nn.Module):
         x3 = self.enc2(x2)
         x4 = self.enc3(x3)
         x5 = self.enc4(x4)
+        x5 = self.enc5(x5)
 
         mask1 = self.dec1(x5, x4)
         mask2 = self.dec2(mask1, x3)

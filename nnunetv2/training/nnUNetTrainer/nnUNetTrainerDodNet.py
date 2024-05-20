@@ -12,21 +12,6 @@ from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet impo
     MyNet,
 )
 
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNetv2 import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_mschead import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_Mamba import (
-#     MyNet,
-# )
-
-# from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MyDodNet_Mamba_mschead import (
-#     MyNet,
-# )
 
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn
 
@@ -48,13 +33,20 @@ class DodTrainer(nnUNetTrainer):
         self.num_epochs = 1000
         self.batch_size = 2
         self.oversample_foreground_percent = 0.66
-        self.initial_lr = 2e-4
+        self.initial_lr = 1e-3
+        self.weight_decay = 3e-5
         self.enable_deep_supervision = False
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
+        # optimizer = torch.optim.AdamW(
+        #     self.network.parameters(),
+        #     self.initial_lr,
+        #     weight_decay=self.weight_decay,
+        # )
+        optimizer = torch.optim.SGD(
             self.network.parameters(),
             self.initial_lr,
+            momentum=0.9,
             weight_decay=self.weight_decay,
         )
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -86,10 +78,10 @@ class DodTrainer(nnUNetTrainer):
         for k in range(len(keys)):
             if "Tr" in keys[k]:
                 task_ids[k] = 0
-                loss_weight[k] = 10
+                loss_weight[k] = 0.8
             else:
                 task_ids[k] = 1
-                loss_weight[k] = 1
+                loss_weight[k] = 0.2
         task_ids = np.array(task_ids)
         loss_weight = torch.tensor(loss_weight).cuda()
 
@@ -110,8 +102,6 @@ class DodTrainer(nnUNetTrainer):
             else dummy_context()
         ):
             output = self.network(data, task_ids)
-            # output = self.network(data)
-            # del data
             l = self.loss(output, target, loss_weight)
 
         if self.grad_scaler is not None:
@@ -257,7 +247,7 @@ class DodTrainer(nnUNetTrainer):
         should be generated. label_manager takes care of all that for you.)
 
         """
-        return MyNet(num_input_channels, num_output_channels, 32, 16)
+        return MyNet(num_input_channels, num_output_channels)
 
     def set_deep_supervision_enabled(self, enabled: bool):
         pass

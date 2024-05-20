@@ -106,7 +106,6 @@ class DC_and_Weight_BCE_loss(nn.Module):
     def forward(
         self, net_output: torch.Tensor, target: torch.Tensor, loss_weight: torch.Tensor
     ):
-
         if self.use_ignore_label:
             # target is one hot encoded here. invert it so that it is True wherever we can compute the loss
             mask = (1 - target[:, -1:]).bool()

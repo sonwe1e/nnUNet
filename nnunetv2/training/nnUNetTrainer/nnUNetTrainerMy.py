@@ -24,17 +24,17 @@ class MyTrainer(nnUNetTrainer):
         super().__init__(
             plans, configuration, fold, dataset_json, unpack_dataset, device, exp_name
         )
-        self.num_epochs = 1000
-        self.oversample_foreground_percent = 0.66
+        self.num_epochs = 1000  # 训练次数
+        self.oversample_foreground_percent = 0.66  # 正样本采样概率
         self.initial_lr = 2e-4
-        self.enable_deep_supervision = True
+        self.enable_deep_supervision = True  # 使用深层监督 每个 level 都计算 loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.network.parameters(),
             self.initial_lr,
             weight_decay=self.weight_decay,
-        )
+        )  # 使用 AdamW 作为优化器
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.initial_lr,

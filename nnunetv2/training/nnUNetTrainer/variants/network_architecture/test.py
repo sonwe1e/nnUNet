@@ -62,27 +62,30 @@ class DoubleConv(nn.Module):
             nn.Conv3d(in_channels, out_channels, 1, 1, 0),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, 3, 1, 1),
+            nn.Conv3d(out_channels, out_channels, 3, 1, 1, groups=8),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
             nn.Conv3d(out_channels, out_channels, 1, 1, 0),
             nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True),
         )
         self.residual = in_channels == out_channels
+        self.leaky_relu = nn.LeakyReLU(inplace=True)
 
     def forward(self, x):
-        return (self.double_conv(x) + x) if self.residual else (self.double_conv(x))
+        return (
+            self.leaky_relu(self.double_conv(x) + x)
+            if self.residual
+            else self.leaky_relu(self.double_conv(x))
+        )
 
 
 class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.encoder = nn.Sequential(
-            # nn.Conv3d(in_channels, in_channels, 2, 2),
-            nn.MaxPool3d(2),
+            nn.Conv3d(in_channels, in_channels, 2, 2),
             DoubleConv(in_channels, out_channels),
-            # DoubleConv(out_channels, out_channels),
+            DoubleConv(out_channels, out_channels),
         )
 
     def forward(self, x):
@@ -95,7 +98,7 @@ class Up(nn.Module):
         low_channels,
         high_channels,
         out_channels,
-        fusion_mode="cat",
+        fusion_mode="add",
     ):
         super().__init__()
 
@@ -138,8 +141,8 @@ class MyNet(nn.Module):
         self,
         in_channels,
         n_classes,
-        depth=5,
-        encoder_channels=[32, 64, 128, 256, 320, 320],
+        depth=4,
+        encoder_channels=[16, 32, 64, 128, 256],
         head_channels=16,
     ):
         super().__init__()
@@ -152,8 +155,6 @@ class MyNet(nn.Module):
         self.conv = DoubleConv(in_channels, encoder_channels[0])
         self.encoders = nn.ModuleList()  # 使用 ModuleList 存储编码器层
         self.decoders = nn.ModuleList()  # 使用 ModuleList 存储解码器层
-        self.IA_embeddings = nn.Parameter(torch.zeros(1, head_channels))
-        self.Artery_embeddings = nn.Parameter(torch.ones(1, head_channels))
 
         # 创建编码器层
         for i in range(self.depth):
@@ -177,30 +178,15 @@ class MyNet(nn.Module):
         ]
 
         self.GAP = nn.AdaptiveAvgPool3d(1)
-        self.controller = nn.Sequential(
-            nn.Conv3d(
-                encoder_channels[-1] + self.head_channels,
-                encoder_channels[-1] + self.head_channels // 2,
-                1,
-            ),
-            nn.SELU(),
-            nn.Conv3d(
-                encoder_channels[-1] + self.head_channels // 2,
-                sum(self.params_list),
-                1,
-            ),
+        self.controller = nn.Conv3d(
+            encoder_channels[0] * 2**self.depth + 2, sum(self.params_list), 1
         )
 
     def encoding_task(self, task_id):
         N = task_id.shape[0]
-        task_encoding = torch.zeros(size=(N, self.head_channels))
-        # task_encoding = torch.zeros(size=(N, 2))
+        task_encoding = torch.zeros(size=(N, 2))
         for i in range(N):
-            # task_encoding[i, task_id[i]] = 1
-            task_encoding[i] = (
-                self.IA_embeddings * (1 - task_id[i])
-                + self.Artery_embeddings * task_id[i]
-            )
+            task_encoding[i, task_id[i]] = 1
         return task_encoding.cuda()
 
     def forward(self, x, task_id):
@@ -251,9 +237,9 @@ class MyNet(nn.Module):
 if __name__ == "__main__":
     import numpy as np
 
-    model = MyNet(1, 1).cuda()
+    model = MyNet(1, 2, 3, [16, 32, 64, 128]).cuda()
     # print(model.state_dict().keys())
-    x = torch.randn((2, 1, 128, 128, 128)).cuda()
+    x = torch.randn((2, 1, 192, 192, 192)).cuda()
     y = model(x, np.array([0, 1]))
     for _ in y:
         print(_.shape)
