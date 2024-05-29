@@ -783,13 +783,12 @@ class nnUNetPredictor(object):
 
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
-        task_ids = [0] * len(x)
-        task_ids = np.array(task_ids)
-        try:
-            prediction = self.network(x, task_ids)
-        except:
-            prediction = self.network(x)
+        prediction = self.network(x)
 
+        # 将 prediction 插值到和 x 相同的维度
+        prediction = torch.nn.functional.interpolate(
+            prediction, size=x.shape[2:], mode="trilinear", align_corners=True
+        )
         if mirror_axes is not None:
             # check for invalid numbers in mirror_axes
             # x should be 5d for 3d images and 4d for 2d. so the max value of mirror_axes cannot exceed len(x.shape) - 3
@@ -803,16 +802,15 @@ class nnUNetPredictor(object):
                 for c in itertools.combinations([m + 2 for m in mirror_axes], i + 1)
             ]
             for axes in axes_combinations:
-                try:
-                    prediction += torch.flip(
-                        self.network(torch.flip(x, (*axes,)), task_ids),
-                        (*axes,),
-                    )
-                except:
-                    prediction += torch.flip(
+                prediction += torch.nn.functional.interpolate(
+                    torch.flip(
                         self.network(torch.flip(x, (*axes,))),
                         (*axes,),
-                    )
+                    ),
+                    size=x.shape[2:],
+                    mode="trilinear",
+                    align_corners=True,
+                )
             prediction /= len(axes_combinations) + 1
         return prediction
 
@@ -900,7 +898,7 @@ class nnUNetPredictor(object):
         # So autocast will only be active if we have a cuda device.
         with torch.no_grad():
             with (
-                torch.autocast(self.device.type, enabled=True)
+                torch.autocast(self.device.type, enabled=False)
                 if self.device.type == "cuda"
                 else dummy_context()
             ):
@@ -942,6 +940,7 @@ class nnUNetPredictor(object):
                         print(
                             "Prediction on device was unsuccessful, probably due to a lack of memory. Moving results arrays to CPU"
                         )
+                        print(data.shape)
                         empty_cache(self.device)
                         predicted_logits = (
                             self._internal_predict_sliding_window_return_logits(

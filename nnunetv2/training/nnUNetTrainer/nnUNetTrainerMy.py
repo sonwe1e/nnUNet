@@ -25,15 +25,18 @@ class MyTrainer(nnUNetTrainer):
             plans, configuration, fold, dataset_json, unpack_dataset, device, exp_name
         )
         self.num_epochs = 1000
-        self.oversample_foreground_percent = 0.66
-        self.initial_lr = 2e-4
+        self.oversample_foreground_percent = 0.5
+        self.initial_lr = 3e-3
+        self.weight_decay = 2e-4
         self.enable_deep_supervision = True
+        self.grad_scaler = None
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.network.parameters(),
             self.initial_lr,
             weight_decay=self.weight_decay,
+            betas=(0.9, 0.95),
         )
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
@@ -71,7 +74,7 @@ class MyTrainer(nnUNetTrainer):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
         with (
-            autocast(self.device.type, enabled=True)
+            autocast(self.device.type, enabled=False)
             if self.device.type == "cuda"
             else dummy_context()
         ):
@@ -122,7 +125,9 @@ class MyTrainer(nnUNetTrainer):
 
         """
         return MyNet(
-            num_input_channels, num_output_channels, 32, enable_deep_supervision
+            num_input_channels,
+            num_output_channels,
+            deep_supervision=enable_deep_supervision,
         )
 
     def set_deep_supervision_enabled(self, enabled: bool):

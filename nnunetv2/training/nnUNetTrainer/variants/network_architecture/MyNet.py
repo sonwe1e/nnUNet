@@ -33,92 +33,7 @@ class SKFusion(nn.Module):
         return out
 
 
-class DoubleConv(nn.Module):
-    """(Conv3D -> IN -> LeakyReLU) * 2"""
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.double_conv = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, 1, 1, 0),
-            nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, 3, 1, 1, groups=8),
-            nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, 1, 1, 0),
-            nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True),
-        )
-        # self.double_conv = nn.Sequential(
-        #     nn.Conv3d(in_channels, out_channels, 3, 1, 1),
-        #     nn.InstanceNorm3d(out_channels),
-        #     nn.LeakyReLU(inplace=True),
-        #     nn.Conv3d(out_channels, out_channels, 3, 1, 1),
-        #     nn.InstanceNorm3d(out_channels),
-        #     nn.LeakyReLU(inplace=True),
-        # )
-        self.residual = in_channels == out_channels
-
-    def forward(self, x):
-        return self.double_conv(x) + x if self.residual else self.double_conv(x)
-
-
-class Down(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.MaxPool3d(2, 2), DoubleConv(in_channels, out_channels)
-        )
-
-    def forward(self, x):
-        return self.encoder(x)
-
-
-class Up(nn.Module):
-    def __init__(self, in_channels, out_channels, trilinear=False):
-        super().__init__()
-
-        if trilinear:
-            self.up = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=True)
-        else:
-            self.up = nn.ConvTranspose3d(
-                in_channels // 2, in_channels // 2, kernel_size=2, stride=2
-            )
-
-        self.conv = DoubleConv(in_channels, out_channels)
-
-    def forward(self, x1, x2):
-        x1 = self.up(x1)
-
-        diffZ = x2.size()[2] - x1.size()[2]
-        diffY = x2.size()[3] - x1.size()[3]
-        diffX = x2.size()[4] - x1.size()[4]
-        x1 = F.pad(
-            x1,
-            [
-                diffX // 2,
-                diffX - diffX // 2,
-                diffY // 2,
-                diffY - diffY // 2,
-                diffZ // 2,
-                diffZ - diffZ // 2,
-            ],
-        )
-
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
-
-
-class Out(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class mschead(nn.Module):
+class MSCHead(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=1)
@@ -138,57 +53,154 @@ class mschead(nn.Module):
         return x
 
 
+class DoubleConv(nn.Module):
+    """(Conv3D -> IN -> LeakyReLU) * 2"""
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.double_conv = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, 1, 1, 0),
+            nn.InstanceNorm3d(out_channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv3d(out_channels, out_channels, 3, 1, 1),
+            nn.InstanceNorm3d(out_channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv3d(out_channels, out_channels, 1, 1, 0),
+            nn.InstanceNorm3d(out_channels),
+        )
+        self.residual = in_channels == out_channels
+        self.leaky_relu = nn.LeakyReLU(inplace=True)
+
+    def forward(self, x):
+        return (
+            self.leaky_relu(self.double_conv(x) + x)
+            if self.residual
+            else self.leaky_relu(self.double_conv(x))
+        )
+
+
+class Down(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            # nn.Conv3d(in_channels, in_channels, 2, 2),
+            nn.AvgPool3d(2),
+            DoubleConv(in_channels, out_channels),
+            # DoubleConv(out_channels, out_channels),
+        )
+
+    def forward(self, x):
+        return self.encoder(x)
+
+
+class Up(nn.Module):
+    def __init__(
+        self,
+        low_channels,
+        high_channels,
+        out_channels,
+        fusion_mode="add",
+    ):
+        super().__init__()
+
+        self.fusion_mode = fusion_mode
+        self.up = nn.ConvTranspose3d(
+            low_channels, high_channels, kernel_size=2, stride=2
+        )
+        self.conv = (
+            DoubleConv(2 * high_channels, out_channels)
+            if fusion_mode == "cat"
+            else DoubleConv(high_channels, out_channels)
+        )
+        # self.conv2 = DoubleConv(out_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        if self.fusion_mode == "cat":
+            x = torch.cat([x2, x1], dim=1)
+        else:
+            x = x2 + x1
+        return self.conv(x)
+
+
 class MyNet(nn.Module):
-    def __init__(self, in_channels, n_classes, n_channels, deep_supervision=False):
+    """
+    MyNet
+
+    Args:
+        in_channels (int): 输入通道数。
+        n_classes (int): 类别数。
+        depth (int, optional): 编码器和解码器的深度。默认为 4。
+        head_channels (int, optional): 头部卷积层的通道数。默认为 16。
+        encoder_channels (list of int, optional): 编码器每一层的通道数。
+            列表长度必须等于 `depth`。默认为 [16, 32, 64, 128, 256]。
+
+    Raises:
+        AssertionError: 如果输入参数不满足条件。
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        n_classes,
+        depth=4,
+        encoder_channels=[32, 64, 128, 256, 320],
+        deep_supervision=False,
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.n_classes = n_classes
-        self.n_channels = n_channels
-
-        self.conv = DoubleConv(in_channels, n_channels)
-        self.enc1 = Down(n_channels, 2 * n_channels)
-        self.enc2 = Down(2 * n_channels, 4 * n_channels)
-        self.enc3 = Down(4 * n_channels, 8 * n_channels)
-        self.enc4 = Down(8 * n_channels, 8 * n_channels)
-
-        self.dec1 = Up(16 * n_channels, 4 * n_channels)
-        self.dec2 = Up(8 * n_channels, 2 * n_channels)
-        self.dec3 = Up(4 * n_channels, n_channels)
-        self.dec4 = Up(2 * n_channels, n_channels)
+        self.depth = depth
         self.deep_supervision = deep_supervision
+        assert len(encoder_channels) == depth + 1, "len(encoder_channels) != depth + 1"
+
+        self.conv = DoubleConv(in_channels, encoder_channels[0])
+        self.encoders = nn.ModuleList()  # 使用 ModuleList 存储编码器层
+        self.decoders = nn.ModuleList()  # 使用 ModuleList 存储解码器层
+
+        # 创建编码器层
+        for i in range(self.depth):
+            self.encoders.append(Down(encoder_channels[i], encoder_channels[i + 1]))
+
+        # 创建解码器层
+        for i in range(self.depth):
+            self.decoders.append(
+                Up(
+                    encoder_channels[self.depth - i],
+                    encoder_channels[self.depth - i - 1],
+                    encoder_channels[self.depth - i - 1],
+                )
+            )
         self.out = nn.ModuleList(
             [
-                Out(4 * n_channels, n_classes),
-                Out(2 * n_channels, n_classes),
-                Out(n_channels, n_classes),
-                Out(n_channels, n_classes),
-                mschead(n_channels, n_classes),
+                nn.Conv3d(encoder_channels[depth - i - 1], n_classes, 1, 1, 0)
+                for i in range(depth)
             ]
         )
 
     def forward(self, x):
-        x1 = self.conv(x)
-        x2 = self.enc1(x1)
-        x3 = self.enc2(x2)
-        x4 = self.enc3(x3)
-        x5 = self.enc4(x4)
+        encoder_features = [self.conv(x)]  # 存储编码器输出
 
-        mask1 = self.dec1(x5, x4)
-        mask2 = self.dec2(mask1, x3)
-        mask3 = self.dec3(mask2, x2)
-        mask4 = self.dec4(mask3, x1)
-        masks = [mask1, mask2, mask3, mask4]
+        # 编码过程
+        for encoder in self.encoders:
+            encoder_features.append(encoder(encoder_features[-1]))
+
+        # 解码过程
+        x_dec = encoder_features[-1]
+        decoder_features = []  # 用于存储解码器特征
+        for i, decoder in enumerate(self.decoders):
+            x_dec = decoder(x_dec, encoder_features[-(i + 2)])
+            decoder_features.append(x_dec)  # 保存解码器特征
 
         if self.deep_supervision:
-            return [m(mask) for m, mask in zip(self.out, masks)][::-1]
+            return [m(mask) for m, mask in zip(self.out, decoder_features)][::-1]
         else:
-            return self.out[-1](mask4)
+            return self.out[-1](decoder_features[-1])
 
 
 if __name__ == "__main__":
-    model = MyNet(1, 2, 32, False)
-    # print(model.state_dict().keys())
-    x = torch.randn((2, 1, 128, 128, 128))
+    model = MyNet(1, 24).cuda(4)
+    x = torch.randn((2, 1, 128, 224, 224)).cuda(4)
     y = model(x)
     for _ in y:
         print(_.shape)
